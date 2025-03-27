@@ -1,62 +1,36 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap');
+/* Import a modern, clean font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 body {
   margin: 0;
   padding: 0;
-  font-family: 'Orbitron', sans-serif;
-  background: linear-gradient(135deg, #0a1a2f, #000000);
+  font-family: 'Inter', sans-serif;
+  background: #f7f7f7; /* Light gray background for a clean look */
   min-height: 100vh;
-  color: white;
+  color: #333; /* Darker text for readability */
 }
 
 .App {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start; /* Align content at the top with some padding */
   align-items: center;
   min-height: 100vh;
-  padding: 1rem;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
-}
-
-.App-link {
-  color: #61dafb;
+  padding: 2rem;
 }
 
 .app-title {
-  font-size: 2rem;
-  font-weight: 700;
+  font-size: 1.75rem; /* Slightly smaller for a refined look */
+  font-weight: 600;
   text-align: center;
-  text-shadow: 0 0 10px #00d2ff, 0 0 20px #3a7bd5;
-  margin-bottom: 2rem;
+  color: #333; /* Darker color for contrast */
+  margin-bottom: 1.5rem; /* Reduced margin for tighter spacing */
+  letter-spacing: 0.5px; /* Subtle spacing for elegance */
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* Remove unused or overly decorative styles */
+.App-logo,
+.App-header,
+.App-link {
+  display: none; /* These aren't used in your current App.js */
 }

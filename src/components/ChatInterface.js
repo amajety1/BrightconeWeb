@@ -1,128 +1,143 @@
-import React, { useState, useEffect } from 'react';
-import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
-import { OpenAI } from 'openai';
+import React, { useState, useEffect, useRef } from 'react';
 import './ChatInterface.css';
-
-// Import the BART context file
-import bartContext from '../data/bart_context.txt';
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([
-    'Welcome to the BART AI Assistant! Speak or type about schedules, fares, or stations.'
+    'Welcome to the BART AI Assistant! Tap to talk about schedules, fares, or stations.',
   ]);
-  const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [listening, setListening] = useState(false);
+  const pcRef = useRef(null); // WebRTC Peer Connection
+  const dcRef = useRef(null); // Data Channel
+  const audioRef = useRef(new Audio()); // Audio element for playback
 
-  const openai = new OpenAI({
-    apiKey: process.env.REACT_APP_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true
-  });
-
-  const {
-    transcript,
-    listening,
-    resetTranscript,
-    browserSupportsSpeechRecognition
-  } = useSpeechRecognition();
-
+  // Initialize WebRTC connection
   useEffect(() => {
-    if (transcript && !isProcessing && !listening) {
-      console.log('Processing transcript:', transcript);
-      handleUserInput(transcript);
-      resetTranscript();
-    }
-  }, [transcript, listening, isProcessing]);
+    const initWebRTC = async () => {
+      try {
+        // Fetch ephemeral token from your server
+        const tokenResponse = await fetch('http://localhost:5001/session'); // Your server endpoint
+        const data = await tokenResponse.json();
+        const ephemeralKey = data.client_secret.value;
 
-  const extractRelevantContext = (userQuery) => {
-    const keywords = userQuery.toLowerCase().split(' ');
-    const lines = bartContext.split('\n');
-    const relevantLines = lines.filter(line =>
-      keywords.some(keyword => line.toLowerCase().includes(keyword))
-    );
-    return relevantLines.join('\n').slice(0, 1000);
+        // Create Peer Connection
+        const pc = new RTCPeerConnection();
+        pcRef.current = pc;
+
+        // Set up audio playback
+        audioRef.current.autoplay = true;
+        pc.ontrack = (e) => {
+          audioRef.current.srcObject = e.streams[0];
+        };
+
+        // Add local microphone stream
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+        // Set up data channel for events
+        const dc = pc.createDataChannel('oai-events');
+        dcRef.current = dc;
+        dc.onmessage = (e) => {
+          const event = JSON.parse(e.data);
+          console.log('Received event:', event);
+          handleRealtimeEvent(event);
+        };
+        dc.onopen = () => console.log('Data channel opened');
+
+        // Create and set offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // Connect to OpenAI Realtime API
+        const baseUrl = 'https://api.openai.com/v1/realtime';
+        const model = 'gpt-4o-realtime-preview-2024-12-17';
+        const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
+          method: 'POST',
+          body: offer.sdp,
+          headers: {
+            Authorization: `Bearer ${ephemeralKey}`,
+            'Content-Type': 'application/sdp',
+          },
+        });
+
+        const answer = { type: 'answer', sdp: await sdpResponse.text() };
+        await pc.setRemoteDescription(answer);
+      } catch (error) {
+        console.error('Error initializing WebRTC:', error);
+        setMessages((prev) => [...prev, 'AI: Sorry, something went wrong.']);
+      }
+    };
+
+    initWebRTC();
+
+    // Cleanup on unmount
+    return () => {
+      if (pcRef.current) {
+        pcRef.current.close();
+      }
+      if (audioRef.current.srcObject) {
+        audioRef.current.srcObject.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  // Handle incoming Realtime API events
+  const handleRealtimeEvent = (event) => {
+    if (event.type === 'response.audio.delta') {
+      // Audio data is streamed in chunks;
+      setMessages((prev) => [...prev, 'AI: [Audio response received]']);
+    } else if (event.type === 'response.text.delta') {
+      // Text response (if multimodal output is enabled)
+      setMessages((prev) => [...prev, `AI: ${event.value}`]);
+    }
   };
 
-  const handleUserInput = async (userInput) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    setMessages(prev => [...prev, userInput]);
-
-    try {
-      const contextSnippet = extractRelevantContext(userInput);
-      const prompt = `You are a BART AI Assistant. Use this context to inform your response: "${contextSnippet}". Answer the user's query: "${userInput}"`;
-
-      const textPromise = openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: userInput }
-        ],
-        max_tokens: 2048,
-        temperature: 0.5
-      });
-
-      const [textResponse] = await Promise.all([textPromise]);
-      const aiText = textResponse.choices[0].message.content;
-      setMessages(prev => [...prev, `AI: ${aiText}`]);
-
-      const speechPromise = openai.audio.speech.create({
-        model: 'tts-1',
-        voice: 'alloy',
-        input: aiText
-      });
-
-      const speechResponse = await speechPromise;
-      const audioBlob = await speechResponse.arrayBuffer();
-      const audioUrl = URL.createObjectURL(new Blob([audioBlob], { type: 'audio/mp3' }));
-      const audio = new Audio(audioUrl);
-      audio.play();
-      audio.onended = () => URL.revokeObjectURL(audioUrl);
-    } catch (error) {
-      console.error('Error fetching OpenAI response:', error);
-      setMessages(prev => [...prev, 'AI: Sorry, something went wrong.']);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (input.trim() && !isProcessing) {
-      handleUserInput(input);
-      setInput('');
-    }
-  };
-
+  // Toggle voice input
   const handleVoiceInput = () => {
     if (!listening) {
-      SpeechRecognition.startListening({ continuous: false });
+      setListening(true);
+      setIsProcessing(true);
+      // Microphone is already streaming via WebRTC; no additional action needed
     } else {
-      SpeechRecognition.stopListening();
+      setListening(false);
+      setIsProcessing(false);
+      // Send an event to stop audio input if needed (optional)
+      if (dcRef.current && dcRef.current.readyState === 'open') {
+        dcRef.current.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      }
     }
   };
 
-  if (!browserSupportsSpeechRecognition) {
-    return (
-      <div className="chat-container">
-        <div className="error-message">
-          Your browser doesn't support speech recognition.
-        </div>
-      </div>
-    );
-  }
+  // Handle text input (optional fallback)
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const input = e.target.querySelector('input').value;
+    if (input.trim() && !isProcessing) {
+      setMessages((prev) => [...prev, input]);
+      if (dcRef.current && dcRef.current.readyState === 'open') {
+        dcRef.current.send(
+          JSON.stringify({
+            type: 'input_text',
+            value: input,
+          })
+        );
+      }
+      e.target.reset();
+    }
+  };
 
   return (
     <div className="chat-container">
       <div className="circle-container">
-        <div 
-          className={`ai-circle ${listening ? 'listening' : ''}`} 
+        <div
+          className={`ai-circle ${listening ? 'listening' : ''}`}
           onClick={handleVoiceInput}
         ></div>
         {!listening && <div className="tap-to-talk">Tap to Talk</div>}
       </div>
       <div className="chat-window">
         {messages.map((msg, index) => (
-          <div 
+          <div
             key={index}
             className={`message ${index === 0 ? 'ai-message' : index % 2 === 0 ? 'ai-response' : 'user-message'}`}
           >
@@ -134,13 +149,12 @@ const ChatInterface = () => {
         <input
           type="text"
           className="chat-input"
-          placeholder="Speak or type about BART..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type about BART (optional)..."
+          disabled={isProcessing}
         />
         <button type="submit" className="send-button" disabled={isProcessing}>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
           </svg>
         </button>
       </form>
